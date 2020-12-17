@@ -172,6 +172,9 @@ public class TestKafkaConnectorTask extends BaseKafkaZkTest {
 
     KafkaConnectorTask connectorTask = createKafkaConnectorTask(task);
 
+    // validate auto.offset.reset config is overridden to none (given the start offsets)
+    Assert.assertEquals(connectorTask.getConsumerAutoOffsetResetConfig(), "none");
+
     LOG.info("Sending third set of events");
 
     //send 100 more msgs

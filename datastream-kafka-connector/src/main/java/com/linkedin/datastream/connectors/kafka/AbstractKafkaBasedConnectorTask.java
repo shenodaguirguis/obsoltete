@@ -74,6 +74,7 @@ abstract public class AbstractKafkaBasedConnectorTask implements Runnable, Consu
 
   public static final String CONSUMER_AUTO_OFFSET_RESET_CONFIG_LATEST = "latest";
   public static final String CONSUMER_AUTO_OFFSET_RESET_CONFIG_EARLIEST = "earliest";
+  public static final String CONSUMER_AUTO_OFFSET_RESET_CONFIG_NONE = "none";
 
   protected long _lastCommittedTime = System.currentTimeMillis();
   protected int _eventsProcessedCount = 0;
@@ -147,12 +148,7 @@ abstract public class AbstractKafkaBasedConnectorTask implements Runnable, Consu
     _taskName = task.getDatastreamTaskName();
 
     _consumerProps = config.getConsumerProps();
-    if (_datastream.getMetadata().containsKey(KafkaDatastreamMetadataConstants.CONSUMER_OFFSET_RESET_STRATEGY)) {
-      String strategy = _datastream.getMetadata().get(KafkaDatastreamMetadataConstants.CONSUMER_OFFSET_RESET_STRATEGY);
-      _logger.info("Datastream contains consumer config override for {} with value {}",
-          ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, strategy);
-      _consumerProps.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, strategy);
-    }
+
     if (Boolean.TRUE.toString()
         .equals(_datastream.getMetadata().get(KafkaDatastreamMetadataConstants.USE_PASSTHROUGH_COMPRESSION))) {
       _consumerProps.put("enable.shallow.iterator", Boolean.TRUE.toString());
@@ -168,6 +164,22 @@ abstract public class AbstractKafkaBasedConnectorTask implements Runnable, Consu
     _startOffsets = Optional.ofNullable(_datastream.getMetadata().get(DatastreamMetadataConstants.START_POSITION))
         .map(json -> JsonUtils.fromJson(json, new TypeReference<Map<Integer, Long>>() {
         }));
+
+    // if this datastream want to use specific start offsets, we need to have the auto.offset.reset config
+    // set to "none" in the kafka consumer configs, so that the Kafka consumer throws NoOffsetForPartiionException
+    // upon first poll, to be handled by seeking to teh startOffsets
+    if (_startOffsets.isPresent()) {
+      _logger.info("Datastream contains startOffsets, override {} with value {} (was {} in the provided configs)",
+          ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, CONSUMER_AUTO_OFFSET_RESET_CONFIG_NONE,
+          _consumerProps.getProperty(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, ""));
+      _consumerProps.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, CONSUMER_AUTO_OFFSET_RESET_CONFIG_NONE);
+    } else if (_datastream.getMetadata().containsKey(KafkaDatastreamMetadataConstants.CONSUMER_OFFSET_RESET_STRATEGY)) {
+        String strategy = _datastream.getMetadata().get(KafkaDatastreamMetadataConstants.CONSUMER_OFFSET_RESET_STRATEGY);
+        _logger.info("Datastream contains consumer config override for {} with value {}",
+            ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, strategy);
+        _consumerProps.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, strategy);
+    }
+
     _offsetCommitInterval = config.getCommitIntervalMillis();
     _pollTimeoutMillis = config.getPollTimeoutMillis();
     _retrySleepDuration = config.getRetrySleepDuration();
@@ -1034,5 +1046,10 @@ abstract public class AbstractKafkaBasedConnectorTask implements Runnable, Consu
       consumerMetrics.updateErrorRate(1, "Can't find group ID", e);
       throw e;
     }
+  }
+
+  @VisibleForTesting
+  public String getConsumerAutoOffsetResetConfig() {
+    return _consumerProps.getProperty(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "NOT SET");
   }
 }
